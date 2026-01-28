@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 import wandb
 
 from neuralop import H1Loss, LpLoss, Trainer, get_model
-from neuralop.data.datasets import load_darcy_flow_small
+from neuralop.data.datasets.darcy import DarcyDataset
 from neuralop.data.transforms.data_processors import MGPatchingDataProcessor
 from neuralop.training import setup, AdamW
 from neuralop.mpu.comm import get_local_rank
@@ -75,16 +75,40 @@ if config.verbose and is_logger:
 
 # Load the Darcy flow dataset
 data_root = Path(config.data.folder).expanduser()
-train_loader, test_loaders, data_processor = load_darcy_flow_small(
-    data_root=data_root,
+dataset = DarcyDataset(
+    root_dir=data_root,
     n_train=config.data.n_train,
-    batch_size=config.data.batch_size,
-    test_resolutions=config.data.test_resolutions,
     n_tests=config.data.n_tests,
+    batch_size=config.data.batch_size,
     test_batch_sizes=config.data.test_batch_sizes,
-    encode_input=False,
-    encode_output=False,
+    train_resolution=config.data.train_resolution,
+    test_resolutions=config.data.test_resolutions,
+    encode_input=config.data.encode_input,
+    encode_output=config.data.encode_output,
+    download=config.data.download,
 )
+
+train_loader = DataLoader(
+    dataset.train_db,
+    batch_size=config.data.batch_size,
+    shuffle=True,
+    num_workers=1,
+    pin_memory=True,
+    persistent_workers=False,
+)
+
+test_loaders = {}
+for res, test_bsize in zip(config.data.test_resolutions, config.data.test_batch_sizes):
+    test_loaders[res] = DataLoader(
+        dataset.test_dbs[res],
+        batch_size=test_bsize,
+        shuffle=False,
+        num_workers=1,
+        pin_memory=True,
+        persistent_workers=False,
+    )
+
+data_processor = dataset.data_processor
 # Model initialization
 model = get_model(config)
 
