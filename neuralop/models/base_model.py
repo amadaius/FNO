@@ -215,8 +215,12 @@ def get_model(config):
     arch = config.model["model_arch"].lower()
     model_config = config.model.copy()
 
-    # Remove model_arch from config as it's not a model parameter
+    # Remove config/metadata fields that are not model parameters
     model_config.pop("model_arch", None)
+    model_config.pop("arch", None)
+    for key in list(model_config.keys()):
+        if str(key).startswith("_"):
+            model_config.pop(key, None)
 
     # Set the number of input channels depending on channels in data + mg patching
     data_channels = model_config.pop("data_channels")

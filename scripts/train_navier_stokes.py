@@ -91,6 +91,7 @@ train_loader, test_loaders, data_processor = load_navier_stokes_pt(
     test_batch_sizes=config.data.test_batch_sizes,
     encode_input=config.data.encode_input,
     encode_output=config.data.encode_output,
+    download=getattr(config.data, "download", True),
 )
 
 # Model initialization

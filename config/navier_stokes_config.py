@@ -27,6 +27,7 @@ class NavierStokesDatasetConfig(ConfigBase):
     test_batch_sizes: List[int] = [8]
     encode_input: bool = True
     encode_output: bool = True
+    download: bool = True
 
 
 class Default(ConfigBase):

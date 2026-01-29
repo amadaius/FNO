@@ -29,6 +29,8 @@ class FNOConfig(ModelConfig):
     rank: float = 1.0
     fixed_rank_modes: bool = False
     stabilizer: str = "None"
+    hc_rate: int = 0
+    hc_dynamic: bool = True
 
 
 class SimpleFNOConfig(FNOConfig):

@@ -15,6 +15,107 @@ from ..utils import validate_scaling_factor
 Number = Union[int, float]
 
 
+class HyperConnection(nn.Module):
+    def __init__(
+        self,
+        *,
+        dim: int,
+        rate: int,
+        layer_id: int,
+        n_dim: int,
+        dynamic: bool = True,
+    ):
+        super().__init__()
+        if rate < 1:
+            raise ValueError(f"Expected rate >= 1, got rate={rate}")
+        if n_dim < 1:
+            raise ValueError(f"Expected n_dim >= 1, got n_dim={n_dim}")
+
+        self.dim = dim
+        self.rate = rate
+        self.layer_id = layer_id
+        self.n_dim = n_dim
+        self.dynamic = dynamic
+
+        static_beta = torch.ones(rate)
+        self.static_beta = nn.Parameter(static_beta)
+
+        col0 = torch.zeros(rate, 1)
+        col0[layer_id % rate, 0] = 1.0
+        static_alpha = torch.cat([col0, torch.eye(rate)], dim=1)
+        self.static_alpha = nn.Parameter(static_alpha)
+
+        self.dynamic_alpha_scale = nn.Parameter(torch.tensor(0.01))
+        self.dynamic_beta_scale = nn.Parameter(torch.tensor(0.01))
+        self.layer_norm = nn.GroupNorm(num_groups=1, num_channels=dim)
+
+        if self.n_dim == 1:
+            Conv = nn.Conv1d
+            spatial_syms = "x"
+        elif self.n_dim == 2:
+            Conv = nn.Conv2d
+            spatial_syms = "hw"
+        elif self.n_dim == 3:
+            Conv = nn.Conv3d
+            spatial_syms = "dhw"
+        else:
+            raise ValueError(f"Unsupported n_dim={n_dim}")
+
+        self._einsum_eq = f"bij{spatial_syms},bic{spatial_syms}->bjc{spatial_syms}"
+
+        if dynamic:
+            self.dynamic_alpha_fn = Conv(dim, rate * (rate + 1), kernel_size=1, bias=False)
+            self.dynamic_beta_fn = Conv(dim, rate, kernel_size=1, bias=False)
+            nn.init.zeros_(self.dynamic_alpha_fn.weight)
+            nn.init.zeros_(self.dynamic_beta_fn.weight)
+        else:
+            self.dynamic_alpha_fn = None
+            self.dynamic_beta_fn = None
+
+    def width_connection(self, h: torch.Tensor):
+        if h.ndim != (3 + self.n_dim):
+            raise ValueError(
+                f"Expected h.ndim={3 + self.n_dim} for n_dim={self.n_dim}, got h.ndim={h.ndim}"
+            )
+        batch_size = h.shape[0]
+        spatial_shape = h.shape[3:]
+
+        static_alpha = self.static_alpha.view(
+            1, self.rate, self.rate + 1, *([1] * len(spatial_shape))
+        )
+        static_beta = self.static_beta.view(1, self.rate, *([1] * len(spatial_shape)))
+
+        if self.dynamic:
+            ctx = h.mean(dim=1)
+            # ctx uses a mean aggregation over the HC width dimension to keep dynamic_*_fn parameter count independent of `rate`.
+            norm_ctx = self.layer_norm(ctx)
+
+            wc_weight = self.dynamic_alpha_fn(norm_ctx)
+            wc_weight = torch.tanh(wc_weight)
+            wc_weight = wc_weight.view(batch_size, self.rate, self.rate + 1, *spatial_shape)
+
+            dc_weight = self.dynamic_beta_fn(norm_ctx)
+            dc_weight = torch.tanh(dc_weight)
+
+            alpha = static_alpha + wc_weight * self.dynamic_alpha_scale
+            beta = static_beta + dc_weight * self.dynamic_beta_scale
+        else:
+            alpha = static_alpha.expand(batch_size, -1, -1, *spatial_shape)
+            beta = static_beta.expand(batch_size, -1, *spatial_shape)
+
+        mix_h = torch.einsum(self._einsum_eq, alpha, h)
+        if mix_h.shape[1] != (self.rate + 1):
+            raise RuntimeError(
+                f"Expected mix_h.shape[1]==rate+1 ({self.rate + 1}), got mix_h.shape[1]={mix_h.shape[1]}"
+            )
+        return mix_h, beta
+
+    def depth_connection(self, mix_h: torch.Tensor, h_o: torch.Tensor, beta: torch.Tensor):
+        memory = mix_h[:, 1:, ...]
+        update = h_o.unsqueeze(1) * beta.unsqueeze(2)
+        return update + memory
+
+
 class FNOBlocks(nn.Module):
     """FNOBlocks implements a sequence of Fourier layers.
     

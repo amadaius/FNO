@@ -1,5 +1,6 @@
 from functools import partialmethod
 from typing import Tuple, List, Union, Literal
+import math
 
 Number = Union[float, int]
 
@@ -16,7 +17,7 @@ warnings.filterwarnings("once", category=UserWarning)
 from ..layers.embeddings import GridEmbeddingND, GridEmbedding2D
 from ..layers.spectral_convolution import SpectralConv
 from ..layers.padding import DomainPadding
-from ..layers.fno_block import FNOBlocks
+from ..layers.fno_block import FNOBlocks, HyperConnection
 from ..layers.channel_mlp import ChannelMLP
 from ..layers.complex import ComplexValued
 from .base_model import BaseModel
@@ -192,6 +193,8 @@ class FNO(BaseModel, name="FNO"):
         separable: bool = False,
         preactivation: bool = False,
         conv_module: nn.Module = SpectralConv,
+        hc_rate: int = 0,
+        hc_dynamic: bool = True,
     ):
         if decomposition_kwargs is None:
             decomposition_kwargs = {}
@@ -298,6 +301,24 @@ class FNO(BaseModel, name="FNO"):
             n_layers=n_layers,
         )
 
+        self.hc_rate = hc_rate
+        self.hc_dynamic = hc_dynamic
+        if self.hc_rate and self.hc_rate > 0:
+            self.hc_layers = nn.ModuleList(
+                [
+                    HyperConnection(
+                        dim=self.hidden_channels,
+                        rate=self.hc_rate,
+                        layer_id=layer_idx,
+                        n_dim=self.n_dim,
+                        dynamic=self.hc_dynamic,
+                    )
+                    for layer_idx in range(self.n_layers)
+                ]
+            )
+        else:
+            self.hc_layers = None
+
         ## Lifting layer
         # if adding a positional embedding, add those channels to lifting
         lifting_in_channels = self.in_channels
@@ -377,8 +398,29 @@ class FNO(BaseModel, name="FNO"):
         if self.domain_padding is not None:
             x = self.domain_padding.pad(x)
 
-        for layer_idx in range(self.n_layers):
-            x = self.fno_blocks(x, layer_idx, output_shape=output_shape[layer_idx])
+        if self.hc_layers is None:
+            for layer_idx in range(self.n_layers):
+                x = self.fno_blocks(x, layer_idx, output_shape=output_shape[layer_idx])
+        else:
+            h = x.unsqueeze(1).repeat(1, self.hc_rate, 1, *([1] * self.n_dim))
+            for layer_idx in range(self.n_layers):
+                mix_h, beta = self.hc_layers[layer_idx].width_connection(h)
+                h_in = mix_h[:, 0, ...]
+
+                conv = self.fno_blocks.convs[layer_idx]
+                h_out = conv(h_in, output_shape=output_shape[layer_idx])
+
+                if self.fno_blocks.fno_skips is not None:
+                    h_skip = self.fno_blocks.fno_skips[layer_idx](h_in)
+                    h_skip = conv.transform(h_skip, output_shape=output_shape[layer_idx])
+                    h_out = h_out + h_skip
+
+                if layer_idx < (self.n_layers - 1):
+                    h_out = self.non_linearity(h_out)
+
+                h = self.hc_layers[layer_idx].depth_connection(mix_h, h_out, beta)
+
+            x = h.sum(dim=1) / math.sqrt(self.hc_rate)
 
         if self.domain_padding is not None:
             x = self.domain_padding.unpad(x)
