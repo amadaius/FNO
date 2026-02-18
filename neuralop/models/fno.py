@@ -404,8 +404,7 @@ class FNO(BaseModel, name="FNO"):
         else:
             h = x.unsqueeze(1).repeat(1, self.hc_rate, 1, *([1] * self.n_dim))
             for layer_idx in range(self.n_layers):
-                mix_h, beta = self.hc_layers[layer_idx].width_connection(h)
-                h_in = mix_h[:, 0, ...]
+                h_in, beta = self.hc_layers[layer_idx].width_connection(h)
 
                 conv = self.fno_blocks.convs[layer_idx]
                 h_out = conv(h_in, output_shape=output_shape[layer_idx])
@@ -418,7 +417,7 @@ class FNO(BaseModel, name="FNO"):
                 if layer_idx < (self.n_layers - 1):
                     h_out = self.non_linearity(h_out)
 
-                h = self.hc_layers[layer_idx].depth_connection(mix_h, h_out, beta)
+                h = self.hc_layers[layer_idx].depth_connection(h, h_out, beta)
 
             x = h.sum(dim=1) / math.sqrt(self.hc_rate)
 
