@@ -142,11 +142,34 @@ if config.distributed.use_distributed:
             dataset=test_db, batch_size=batch_size, shuffle=False, sampler=test_sampler
         )
 # Create the optimizer
-optimizer = AdamW(
-    model.parameters(),
-    lr=config.opt.learning_rate,
-    weight_decay=config.opt.weight_decay,
-)
+hc_weight_decay = getattr(config.opt, "hc_weight_decay", None)
+if hc_weight_decay is None:
+    optimizer = AdamW(
+        model.parameters(),
+        lr=config.opt.learning_rate,
+        weight_decay=config.opt.weight_decay,
+    )
+else:
+    hc_params = []
+    other_params = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if name.startswith("hc_layers."):
+            hc_params.append(param)
+        else:
+            other_params.append(param)
+
+    param_groups = [
+        {"params": other_params, "weight_decay": config.opt.weight_decay},
+    ]
+    if hc_params:
+        param_groups.append({"params": hc_params, "weight_decay": hc_weight_decay})
+
+    optimizer = AdamW(
+        param_groups,
+        lr=config.opt.learning_rate,
+    )
 
 if config.opt.scheduler == "ReduceLROnPlateau":
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(

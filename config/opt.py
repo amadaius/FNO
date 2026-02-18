@@ -8,6 +8,7 @@ class OptimizationConfig(ConfigBase):
     testing_loss: str = "l2"
     learning_rate: float = 3e-4
     weight_decay: float = 1e-4
+    hc_weight_decay: Optional[float] = None
     eval_interval: int = 1
     mixed_precision: bool = False
     scheduler: Literal["StepLR", "ReduceLROnPlateau", "CosineAnnealingLR"] = "StepLR"
