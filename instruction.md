@@ -1,2 +1,2 @@
-CUDA_VISIBLE_DEVICES=2 TAG=mHC2L4_CFD sh cfd1D.sh
+CUDA_VISIBLE_DEVICES=2 TAG=mHC2L4_CFD sh cfd1D.sh > output.log 2>&1 &
 python /home/leeshu/wmm/neuraloperator-main/cfd2Dpreprocess.py  --h5 /home/leeshu/wmm/neuraloperator-main/neuralop/data/datasets/data/CFD-2D/Rand_M1.0_Eta1e-08_Zeta1e-08_periodic_512/164692 --out-dir /home/leeshu/wmm/neuraloperator-main/neuralop/data/datasets/data/CFD-2D/Rand_M1.0_Eta1e-08_Zeta1e-08_periodic_512 --target-res 64
